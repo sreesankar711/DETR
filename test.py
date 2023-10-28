@@ -318,9 +318,6 @@ def padcrop(images_path, model, postprocessors, device, output_path):
         infer_time = end_t - start_t
         duration += infer_time
         
-        img_save_path = os.path.join(output_path, filename)
-        cv2.imwrite(img_save_path, img)
-        
         print("Processed...{} in ({:.3f}s)".format(filename, infer_time))
 
     avg_duration = duration / len(images_path)
