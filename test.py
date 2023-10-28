@@ -295,27 +295,28 @@ def padcrop(images_path, model, postprocessors, device, output_path):
 
             padding = 10
 
-            bbox[0] -= padding
-            bbox[1] -= padding
-            bbox[2] += padding
-            bbox[3] += padding
+            bbox[0, 0] -= padding
+            bbox[0, 1] -= padding
+            bbox[1, 0] += padding
+            bbox[1, 1] -= padding
+            bbox[2, 0] += padding
+            bbox[2, 1] += padding
+            bbox[3, 0] -= padding
+            bbox[3, 1] += padding
     
             # Ensure the coordinates are within the image boundaries
-            bbox[0] = max(0, bbox[0])
-            bbox[1] = max(0, bbox[1])
-            bbox[2] = min(img.shape[1], bbox[2])
-            bbox[3] = min(img.shape[0], bbox[3])
+            bbox[:, 0] = np.clip(bbox[:, 0], 0, img.shape[1])
+            bbox[:, 1] = np.clip(bbox[:, 1], 0, img.shape[0])
+    
+            
 
-            cropped_img = img[bbox[1]:bbox[3], bbox[0]:bbox[2]]
+            cropped_img = img[bbox[0, 1]:bbox[2, 1], bbox[0, 0]:bbox[2, 0]]
             cropped_img_save_path = os.path.join(output_path, f"{filename}_{chr(97+idx)}.png")
             cv2.imwrite(cropped_img_save_path, cropped_img)
 
         
         infer_time = end_t - start_t
         duration += infer_time
-        
-        img_save_path = os.path.join(output_path, filename)
-        cv2.imwrite(img_save_path, img)
         
         print("Processed...{} in ({:.3f}s)".format(filename, infer_time))
 
