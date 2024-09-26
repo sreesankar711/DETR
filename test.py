@@ -218,6 +218,113 @@ def infer(images_path, model, postprocessors, device, output_path):
     print("Avg. Time: {:.3f}s".format(avg_duration))
 
 
+@torch.no_grad()
+def padcrop(images_path, model, postprocessors, device, output_path):
+    model.eval()
+    duration = 0
+    for img_sample in images_path:
+        filename = os.path.basename(img_sample)
+        orig_image = Image.open(img_sample)
+        w, h = orig_image.size
+        transform = make_Table_transforms("val")
+        dummy_target = {
+            "size": torch.as_tensor([int(h), int(w)]),
+            "orig_size": torch.as_tensor([int(h), int(w)])
+        }
+        image, targets = transform(orig_image, dummy_target)
+        image = image.unsqueeze(0)
+        image = image.to(device)
+
+
+        conv_features, enc_attn_weights, dec_attn_weights = [], [], []
+        hooks = [
+            model.backbone[-2].register_forward_hook(
+                        lambda self, input, output: conv_features.append(output)
+
+            ),
+            model.transformer.encoder.layers[-1].self_attn.register_forward_hook(
+                        lambda self, input, output: enc_attn_weights.append(output[1])
+
+            ),
+            model.transformer.decoder.layers[-1].multihead_attn.register_forward_hook(
+                        lambda self, input, output: dec_attn_weights.append(output[1])
+
+            ),
+
+        ]
+
+        start_t = time.perf_counter()
+        outputs = model(image)
+        end_t = time.perf_counter()
+
+        outputs["pred_logits"] = outputs["pred_logits"].cpu()
+        outputs["pred_boxes"] = outputs["pred_boxes"].cpu()
+
+        probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]
+        # keep = probas.max(-1).values > 0.85
+        keep = probas.max(-1).values > args.thresh
+
+        bboxes_scaled = rescale_bboxes(outputs['pred_boxes'][0, keep], orig_image.size)
+        probas = probas[keep].cpu().data.numpy()
+
+        for hook in hooks:
+            hook.remove()
+
+        conv_features = conv_features[0]
+        enc_attn_weights = enc_attn_weights[0]
+        dec_attn_weights = dec_attn_weights[0].cpu()
+
+        # get the feature map shape
+        h, w = conv_features['0'].tensors.shape[-2:]
+
+        if len(bboxes_scaled) == 0:
+            continue
+
+        img = np.array(orig_image)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+        for idx, box in enumerate(bboxes_scaled):
+            bbox = box.cpu().data.numpy()
+            bbox = bbox.astype(np.int32)
+            bbox = np.array([
+                [bbox[0], bbox[1]],
+                [bbox[2], bbox[1]],
+                [bbox[2], bbox[3]],
+                [bbox[0], bbox[3]],
+                ])
+
+            padding = 10
+
+            bbox[0, 0] -= padding
+            bbox[0, 1] -= padding
+            bbox[1, 0] += padding
+            bbox[1, 1] -= padding
+            bbox[2, 0] += padding
+            bbox[2, 1] += padding
+            bbox[3, 0] -= padding
+            bbox[3, 1] += padding
+    
+            # Ensure the coordinates are within the image boundaries
+            bbox[:, 0] = np.clip(bbox[:, 0], 0, img.shape[1])
+            bbox[:, 1] = np.clip(bbox[:, 1], 0, img.shape[0])
+    
+            
+
+            cropped_img = img[bbox[0, 1]:bbox[2, 1], bbox[0, 0]:bbox[2, 0]]
+            cropped_img_save_path = os.path.join(output_path, f"{filename}_{chr(97+idx)}.png")
+            cv2.imwrite(cropped_img_save_path, cropped_img)
+
+        
+        infer_time = end_t - start_t
+        duration += infer_time
+        
+        print("Processed...{} in ({:.3f}s)".format(filename, infer_time))
+
+    avg_duration = duration / len(images_path)
+    print("Avg. Time: {:.3f}s".format(avg_duration))
+
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
@@ -233,4 +340,4 @@ if __name__ == "__main__":
     model.to(device)
     image_paths = get_images(args.data_path)
 
-    infer(image_paths, model, postprocessors, device, args.output_dir)
+    padcrop(image_paths, model, postprocessors, device, args.output_dir)
